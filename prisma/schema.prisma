@@ -1,0 +1,1370 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  SALES
+  PRODUCTION
+  ORDER
+  DESIGN_3D
+  /// Phòng R&D. Vai CHỈ-ĐỌC gần như hoàn toàn: thứ duy nhất họ ghi được là `OrderItem.masoMau`.
+  ///
+  /// ⚠️ Quyền ghi KHÔNG nằm ở đây mà ở hai tầng: route gác AI vào được, còn
+  /// `ROLE_WRITABLE_COLUMNS` (business/orders/item-writable-fields.ts) gác VÀO RỒI GHI CỘT NÀO.
+  /// Mọi route ghi khác dùng danh sách trắng vai nên RND bị từ chối theo MẶC ĐỊNH — không phải
+  /// nhờ ai nhớ chặn.
+  RND
+}
+
+enum Design3DAssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  WAITING_INFO
+  SENT_RESULT
+  REASSIGNED
+  CANCELLED
+}
+
+enum Design3DProgressStatus {
+  IN_PROGRESS
+  WAITING_INFO
+  SENT_RESULT
+}
+
+// Kiểm kết quả nội bộ (Order/Admin) SAU khi NV 3D gửi kết quả — KHÁC với DESIGN_REVIEW của
+// Order (đó là "chờ khách duyệt"). Bước này là "chờ Order/Admin kiểm trước khi gửi khách".
+// VÌ SAO CÓ LƯỢT NÀY. Chỉ có ở lượt thứ 2 trở đi của một MO — lượt đầu là "lần 1", không cần
+// lý do. Suy ra được từ reassignedAt + reviewStatus, nhưng suy đoán sẽ sai ngay khi có luồng
+// thứ tư; một cột nói thẳng thì ba tháng sau vẫn đọc được.
+enum Design3DContinuationReason {
+  // Không duyệt kết quả → giao người khác (màn Việc thiết kế 3D).
+  REJECT_REASSIGN
+  // Đổi người qua form sửa đơn hàng — đường có từ trước, không đi kèm phán quyết nào.
+  MANUAL_REASSIGN
+  // Mở lại sau tạm dừng, thiết lập KPI mới. CHƯA DÙNG — dành cho giai đoạn 3.
+  PAUSE_RESUME
+}
+
+enum Design3DReviewStatus {
+  PENDING_REVIEW
+  ACCEPTED
+  REWORK
+}
+
+enum Kpi3DResultStatus {
+  ON_TIME
+  LATE
+}
+
+enum Design3DOvertimeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum OrderStatus {
+  DRAFT
+  PENDING_DESIGN
+  IN_DESIGN
+  DESIGN_REVIEW
+  DESIGN_APPROVED
+  DESIGN_COMPLETED
+  PENDING_PRODUCTION
+  IN_PRODUCTION
+  QUALITY_CHECK
+  COMPLETED
+  SUSPENDED
+  CANCELLED
+}
+
+enum OrderZone {
+  PRE_PRODUCTION
+  MASTER_HUB
+}
+
+enum AlertType {
+  SPECIAL
+  MATERIAL_SHORTAGE
+  RUSH_ORDER
+  QUALITY_ISSUE
+  DESIGN_CHANGE
+  CUSTOMER_COMPLAINT
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum WorkflowAction {
+  CREATED
+  STATUS_CHANGED
+  ZONE_MOVED
+  VERSION_CREATED
+  ALERT_RAISED
+  ALERT_RESOLVED
+  SUSPENDED
+  RESUMED
+  FIELD_UPDATED
+  COMMENT_ADDED
+  ADMIN_OVERRIDE
+}
+
+enum ProductCategory {
+  NECKLACE
+  RING
+  EARRING
+  BRACELET
+  PENDANT
+  BROOCH
+  OTHER
+}
+
+enum MaterialType {
+  GOLD_18K
+  GOLD_24K
+  SILVER_925
+  PLATINUM
+  DIAMOND
+  GEMSTONE
+  PEARL
+  OTHER
+}
+
+// ─────────────────────────────────────────
+// STORE (V2: NGUON — CH1/CH2/CH3/ADM1/ADM2)
+// Entity riêng để dễ quản lý, thêm mới, gán sales
+// ─────────────────────────────────────────
+
+model Store {
+  id       String  @id @default(cuid())
+  code     String  @unique // "CH1", "CH2", "CH3", "ADM1", "ADM2"
+  name     String // "Cửa hàng 1", "Admin 1", ...
+  isActive Boolean @default(true)
+  locale   String  @default("vi") // "vi" | "en" — UI language for store workers
+
+  orders          Order[]
+  users           User[]
+  userAssignments UserStore[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("stores")
+}
+
+// ─────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  role          UserRole  @default(SALES)
+  image         String?
+  emailVerified DateTime?
+  isActive      Boolean   @default(true)
+
+  // Primary store (legacy — kept for backward compatibility)
+  storeId String?
+  store   Store?  @relation(fields: [storeId], references: [id])
+
+  // Many-to-many store access (use this for access control)
+  storeAssignments UserStore[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Auth.js adapter relations
+  accounts Account[]
+  sessions Session[]
+
+  ordersCreated             Order[]                   @relation("OrderCreatedBy")
+  ordersAssigned            Order[]                   @relation("OrderAssignedTo")
+  versions                  OrderVersion[]
+  history                   WorkflowHistory[]
+  alerts                    Alert[]
+  designer3DProfile         Designer3D?               @relation("Designer3DUser")
+  design3DAssignmentsMade   Design3DAssignment[]      @relation("Design3DAssignmentAssignedBy")
+  design3DProgressLogs      Design3DProgressLog[]     @relation("Design3DProgressUpdatedBy")
+  design3DOvertimeRequests  Design3DOvertimeRequest[] @relation("Design3DOvertimeRequestedBy")
+  design3DOvertimeApprovals Design3DOvertimeRequest[] @relation("Design3DOvertimeApprovedBy")
+  design3DAssignmentReviews Design3DAssignment[]      @relation("Design3DAssignmentReviewedBy")
+  design3DAcknowledgements  Design3DAssignment[]      @relation("Design3DAssignmentAcknowledgedBy")
+  design3DReassignDecisions Design3DAssignment[]      @relation("Design3DAssignmentReassignDecidedBy")
+  design3DPauseConfirms     Design3DPause[]           @relation("Design3DPauseConfirmedBy")
+  design3DPausesMade        Design3DPause[]           @relation("Design3DPausedBy")
+  design3DResumesMade       Design3DPause[]           @relation("Design3DResumedBy")
+  feedbackReports           FeedbackReport[]          @relation("FeedbackReporter")
+  feedbackReplies           FeedbackReport[]          @relation("FeedbackResponder")
+  aiQuestions               AiQuestionLog[]           @relation("AiQuestionAsker")
+  changelogEntries          ChangelogEntry[]          @relation("ChangelogAuthor")
+
+  @@index([role])
+  @@index([isActive])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────
+// USER ↔ STORE ACCESS CONTROL (many-to-many)
+// SALES users can be assigned to multiple stores
+// ─────────────────────────────────────────
+
+model UserStore {
+  userId  String
+  storeId String
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  assignedAt DateTime @default(now())
+
+  @@id([userId, storeId])
+  @@index([storeId])
+  @@map("user_stores")
+}
+
+// ─────────────────────────────────────────
+// AUTH.JS ADAPTER MODELS
+// Required by @auth/prisma-adapter
+// ─────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────
+// ORDER
+// ─────────────────────────────────────────
+
+model Order {
+  id          String @id @default(cuid())
+  orderNumber String @unique
+
+  customerName  String
+  customerPhone String?
+  customerEmail String?
+  saleNote      String? @db.Text
+
+  // V2: NGUON — gán vào Store entity để query + mở rộng dễ hơn
+  storeId     String?
+  store       Store?  @relation(fields: [storeId], references: [id])
+  nguon       String? // giữ lại để tương thích V2 data
+  phanLoaiKh  String?
+  donHang3Sao Boolean @default(false)
+  linkChat    String?
+
+  status      OrderStatus @default(DRAFT)
+  zone        OrderZone   @default(PRE_PRODUCTION)
+  isSuspended Boolean     @default(false)
+
+  isPriority   Boolean @default(false)
+  isRush       Boolean @default(false)
+  // V2: CAP_DO_UU_TIEN — "UT1" | "UT2" | "Normal" | "SR"
+  priorityCode String  @default("Normal")
+
+  orderDate     DateTime  @default(now())
+  requiredDate  DateTime?
+  estimatedDate DateTime?
+  completedDate DateTime?
+
+  estimatedTotal Decimal? @db.Decimal(18, 2)
+  depositAmount  Decimal? @db.Decimal(18, 2)
+  finalTotal     Decimal? @db.Decimal(18, 2)
+  currency       String   @default("VND")
+
+  designBriefUrl String?
+  referenceUrls  String[]
+
+  // incremented on every mutation; client must echo current value back
+  // server rejects if value differs (optimistic concurrency control)
+  version Int @default(1)
+
+  // ── Version lineage ───────────────────────────────────────────────────────
+  // Null for original/base orders; populated when a version is created via createVersion.
+  baseOrderNumber String? // The base SO# this was derived from (e.g. "26.36806")
+  versionNumber   Int? // Sequential: 1, 2, 3… (null = base order)
+
+  // Base MO# of the first item — kept in sync by the API on create/version.
+  // Groups all versions of the same MO adjacent regardless of shared SO.
+  // Indexed with versionNumber for O(log n) grouped pagination.
+  sortKey String @default("")
+
+  // V2 parity: free-text sales name — no FK required
+  salesName    String?
+  // nullable to support V2-style form; connect to User when auth is ready
+  createdById  String?
+  createdBy    User?   @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  assignedToId String?
+  assignedTo   User?   @relation("OrderAssignedTo", fields: [assignedToId], references: [id])
+
+  items               OrderItem[]
+  versions            OrderVersion[]
+  workflowHistory     WorkflowHistory[]
+  alerts              Alert[]
+  productionDetail    ProductionDetail?
+  design3DAssignments Design3DAssignment[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([status])
+  @@index([zone])
+  @@index([isSuspended])
+  @@index([storeId])
+  @@index([createdById])
+  @@index([assignedToId])
+  @@index([requiredDate])
+  @@index([deletedAt])
+  @@index([orderDate])
+  @@index([completedDate])
+  @@index([deletedAt, zone, status])
+  @@index([deletedAt, status])
+  @@index([baseOrderNumber])
+  @@index([sortKey, versionNumber])
+  @@map("orders")
+}
+
+// ─────────────────────────────────────────
+// ORDER ITEM
+// ─────────────────────────────────────────
+
+model OrderItem {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  lineNumber  Int
+  productName String
+  category    ProductCategory @default(OTHER)
+  quantity    Int             @default(1)
+
+  material       MaterialType?
+  // V2: NVL col 22 — free-text gold alloy code e.g. "18KW", "PT950", "BAC925"
+  nvl            String?       @db.VarChar(100)
+  weightGram     Decimal?      @db.Decimal(10, 3)
+  size           String?
+  color          String?
+  engraving      String?
+  specifications Json?
+
+  // Jewelry technical fields (mapped from V2 ThongTinChiTiet JSON)
+  techClassification String[] // raw values: TRƠN / NATURAL / M.MÁY / LAB / CZ / ĐÁ / ĐÁ MÀU / NGỌC TRAI
+  mainStoneType      String? // natural-diamond / CVD / moissanite / CZ / colored
+  mainStoneSize      String? // e.g. "0.3ct", "4x6mm"
+  mainStoneQty       Int?
+  platingType        String? // white / yellow / rose / none
+  techNote           String?  @db.Text
+
+  designFileUrl  String?
+  // Ảnh đại diện sản phẩm — ADMIN/ORDER upload trực tiếp (Supabase Storage), ưu tiên hiển thị
+  // cao nhất trên table view. Link Drive (designFileUrl) ở trên vẫn giữ song song để xem đủ
+  // góc nhìn: designFileUrl thường là FOLDER (webapp không liệt kê được nội dung — cần Drive
+  // API, đã bị chặn theo YEU_CAU_HO_TRO_IT_GOOGLE_OAUTH.md), ảnh này chỉ để nhận diện nhanh.
+  designImageUrl String?
+
+  // Tài liệu tham khảo Order gửi kèm KHI GIAO VIỆC cho NV 3D: ảnh mẫu và video quay sản phẩm
+  // thật. Trước đây NV 3D mở việc của mình chỉ thấy tên sản phẩm và deadline — không một tấm
+  // ảnh nào — nên phải hỏi lại qua chat, và câu trả lời không lưu ở đâu cả.
+  //
+  // VÌ SAO Ở ORDERITEM CHỨ KHÔNG PHẢI Ở LƯỢT GIAO VIỆC: đây là thuộc tính của SẢN PHẨM, không
+  // phải của người làm. Một MO có thể có nhiều NV 3D cùng làm, và cả hai phải nhìn cùng một bộ
+  // tài liệu — gắn vào lượt giao việc thì người thứ hai phải nhập lại, và tệ hơn là hai người
+  // có thể đang nhìn hai bộ khác nhau mà không ai biết.
+  //
+  // Cũng KHÔNG dùng Order.referenceUrls đã có sẵn: đó là cấp SO, mà một SO gồm nhiều MO là các
+  // sản phẩm khác nhau với ảnh mẫu khác nhau — sai độ mịn.
+  /// "Mã số mẫu" — R&D nhập khi MO đã chuyển sang Phòng Sản Xuất.
+  ///
+  /// PER-MO, không phải per-SO: mã định danh một MẪU SẢN PHẨM, mà một SO gồm nhiều MO là các
+  /// sản phẩm khác nhau.
+  ///
+  /// ⚠️ KHÔNG @unique — hai MO được phép cùng mã (cùng một mẫu đặt hai lần là chuyện thường).
+  ///
+  /// 🔴 KHÔNG kế thừa khi nâng phiên bản MO. Route tạo phiên bản chép item bằng `...itemData`
+  /// nên mọi cột tự đi theo; cột này bị loại trừ TƯỜNG MINH ở đó, cùng khuôn `orderDate`. Lý do:
+  /// mã là sự thật của bản CŨ. Và vì ô mã bị ẩn khi MO ở PTK, một giá trị kế thừa sẽ đi theo mà
+  /// KHÔNG AI NHÌN THẤY — xem __tests__ kịch bản PSX → rollback → nâng phiên bản.
+  ///
+  /// Rollback PSX → PTK thì GIỮ giá trị (người dùng chốt): rollback là "quay lại sửa thiết kế",
+  /// không phải "huỷ sản phẩm".
+  masoMau            String?
+  /// LINK ảnh mẫu (thường là Drive). Giữ nguyên nghĩa cũ — song song với `sampleImageUploads`
+  /// bên dưới, đúng cặp `designFileUrl` (link) / `designImageUrl` (file upload) ở trên.
+  sampleImageUrl     String?
+  /// Ảnh mẫu ADMIN/ORDER UPLOAD THẲNG (Supabase Storage), tối đa 2 — xem MAX_SAMPLE_IMAGES.
+  ///
+  /// 🔴 CHỈ route api/orders/[id]/items/[itemId]/sample-images được ghi cột này. Nó CỐ Ý nằm
+  /// NGOÀI danh sách trắng của PATCH item (business/orders/item-writable-fields.ts, có test
+  /// canh): route riêng mới ép được quyền ADMIN/ORDER, kiểm loại file + dung lượng, và xoá
+  /// object cũ trong bucket. Cho ghi thẳng qua PATCH là bỏ qua cả ba, và để lại file mồ côi.
+  ///
+  /// ⚠️ Mảng chứ không phải hai cột `sampleImageUrl2`: hai cột gần giống tên sớm muộn lệch, và
+  /// ảnh thứ ba sẽ đẻ ra cột thứ ba.
+  sampleImageUploads String[] @default([])
+  /// ⚠️ ĐANG NGỪNG DÙNG — đã chép sang `sampleFolderUrl`. Giữ tạm để đối chiếu; một migration
+  /// riêng sẽ bỏ nó sau khi yên tâm. KHÔNG ghi mới vào đây.
+  sampleVideoUrl     String?
+  /// "Folder mẫu" — link Drive tới folder chứa nhiều ảnh + video, cho ca Order cần đưa nhiều
+  /// thông tin cho NV 3D.
+  ///
+  /// Đổi tên từ `sampleVideoUrl` vì ý nghĩa đã đổi: không còn là "một video" mà là "một folder
+  /// tài liệu". Tên cũ giữ lại sẽ nói dối về nội dung nó chứa.
+  sampleFolderUrl    String?
+
+  approvedDesign String?
+
+  crafterName  String?
+  craftingNote String? @db.Text
+  qualityNote  String? @db.Text
+
+  unitPrice Decimal? @db.Decimal(18, 2)
+
+  // V2 ref: MO# per item — generateMoId(soId, itemSeq, 1)
+  // Item 1: moNumber = SO# (e.g. "26.00001")
+  // Item 2+: moNumber = SO# + "-" + lineNumber (e.g. "26.00001-2")
+  moNumber String? @db.VarChar(100)
+
+  // Per-item zone — allows individual MOs in the same SO to be in different zones
+  // PRE_PRODUCTION: MO still in design; MASTER_HUB: MO has been promoted to production
+  zone OrderZone @default(PRE_PRODUCTION)
+
+  // Per-item status override — null means inherit from parent Order.status
+  // Set when user suspends/resumes/cancels a specific MO independently
+  itemStatus OrderStatus?
+
+  // Ngày lên đơn PTK — lấy từ cột NGÀY LÊN ĐƠN của đúng row MO trong T06 CSV
+  orderDate DateTime?
+
+  // Per-MO scheduling & priority fields (moved from Order so each MO is independent)
+  estimatedDate DateTime?
+  requiredDate  DateTime?
+  saleNote      String?   @db.Text
+  priorityCode  String    @default("Normal")
+  isPriority    Boolean   @default(false)
+  isRush        Boolean   @default(false)
+
+  // ─── ƯU TIÊN CỦA VIỆC THIẾT KẾ 3D — TRỤC RIÊNG ──────────────────────────────
+  //
+  // ⚠️ KHÔNG PHẢI BẢN SAO CỦA `priorityCode` Ở NGAY TRÊN. Hai cột trả lời hai câu khác nhau, do
+  // hai người khác nhau đặt:
+  //   · priorityCode         — đơn này gấp cỡ nào với KHÁCH (Sale/Đặt đơn).
+  //   · design3DPriorityCode — trong hàng việc của NV 3D, cái nào dựng trước (Quản lý/Đặt đơn).
+  //
+  // Một đơn UT1 với khách có thể chỉ cần sửa nhẹ bản 3D cũ; ngược lại một đơn thường có thể phải
+  // dựng 3D trước vì còn chờ khách duyệt mẫu. Nên hai cột CỐ Ý KHÔNG ĐỒNG BỘ với nhau — đồng bộ
+  // một chiều thì lần đổi tay sau bị ghi đè, đồng bộ hai chiều thì đổi ưu tiên thiết kế lại làm
+  // đơn hàng thành siêu gấp với khách.
+  //
+  // Thang CHỈ CÓ BA BẬC "UT1" | "UT2" | "Normal" — không có "SR" như thang đơn hàng, vì "đặc biệt"
+  // không trả lời được câu "làm cái nào trước". Luật + chuẩn hoá ở kpi-3d/design-priority.ts.
+  //
+  // VÌ SAO NẰM Ở OrderItem CHỨ KHÔNG Ở Design3DAssignment: ưu tiên là thuộc tính của VIỆC THIẾT KẾ
+  // MO NÀY, không phải của một lượt giao cụ thể — giao lại cho người khác thì việc vẫn gấp như thế.
+  // Đặt trên lượt thì cả BA đường tạo lượt mới (đồng bộ sidebar / đổi người / giao tiếp) đều phải
+  // nhớ mang theo, và quên một đường là ưu tiên âm thầm tụt về Normal ở lần 2.
+  design3DPriorityCode String @default("Normal")
+
+  // Thời điểm MO được hoàn tất (set khi itemStatus → COMPLETED, cleared khi revert)
+  completedAt DateTime?
+
+  design3DAssignments Design3DAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderId, lineNumber])
+  @@index([orderId])
+  @@index([moNumber])
+  @@index([zone])
+  @@index([completedAt])
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────
+// PRODUCTION DETAIL  (Master Hub — ~40 cols)
+// one-to-one with Order; created when order enters MASTER_HUB zone
+// ─────────────────────────────────────────
+
+model ProductionDetail {
+  id      String @id @default(cuid())
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // MO# sinh khi Promote — V2 ref: generateMoId() trong 01_IdGenerator.js
+  productionCode String? @unique // e.g. MO-2605-0001
+
+  workshopCode   String?
+  workshopName   String?
+  supervisorName String?
+
+  // V2 stage 1: RESIN — làm khuôn nhựa trước khi đúc kim loại
+  resinStartAt DateTime?
+  resinDoneAt  DateTime?
+  resinCrafter String?
+
+  // V2 stage 2: ĐÚC — đúc khuôn kim loại
+  castingStartAt DateTime?
+  castingDoneAt  DateTime?
+  castingCrafter String?
+
+  // V2 stage 3: THỦ CÔNG — gia công tay (chỉnh viền, mài tay)
+  handcraftStartAt DateTime?
+  handcraftDoneAt  DateTime?
+  handcraftCrafter String?
+
+  // V2 stage 4: NGUỘI — nguội / chỉnh sửa cơ học (giũa, mài nguội)
+  coldworkStartAt DateTime?
+  coldworkDoneAt  DateTime?
+  coldworkCrafter String?
+
+  // V3 extra: Đánh bóng (finishing, không có trong V2 WF_KEY_MAP nhưng giữ lại)
+  polishingStartAt DateTime?
+  polishingDoneAt  DateTime?
+  polishingCrafter String?
+
+  // V2 stage 5: HỘT — gắn đá chủ / đá tấm
+  settingStartAt DateTime?
+  settingDoneAt  DateTime?
+  settingCrafter String?
+
+  // V2 stage 6: MÓC MÁY — gia công bằng máy CNC / laser
+  machineStartAt DateTime?
+  machineDoneAt  DateTime?
+  machineCrafter String?
+
+  // V2 stage 7: ĐBXM — điện bề xử mặt (mạ)
+  platingStartAt DateTime?
+  platingDoneAt  DateTime?
+  platingCrafter String?
+
+  // V2 stage 8: QC — kiểm tra chất lượng
+  qcStartAt DateTime?
+  qcDoneAt  DateTime?
+  qcCrafter String?
+
+  packagingDoneAt DateTime?
+
+  materialReceived Boolean @default(false)
+  materialNote     String? @db.Text
+
+  qcResult    String?
+  qcNote      String? @db.Text
+  reworkCount Int     @default(0)
+
+  shippingCarrier String?
+  trackingNumber  String?
+  deliveredAt     DateTime?
+
+  internalNote String? @db.Text
+  extraData    Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("production_details")
+}
+
+// ─────────────────────────────────────────
+// ORDER VERSION
+// snapshot created before any Pre-Production edit
+// ─────────────────────────────────────────
+
+model OrderVersion {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  versionNumber  Int
+  snapshot       Json
+  changesSummary String? @db.Text
+  reason         String?
+
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@unique([orderId, versionNumber])
+  @@index([orderId])
+  @@map("order_versions")
+}
+
+// ─────────────────────────────────────────
+// WORKFLOW HISTORY  (full audit log)
+// ─────────────────────────────────────────
+
+model WorkflowHistory {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  action     WorkflowAction
+  fromStatus OrderStatus?
+  toStatus   OrderStatus?
+  fromZone   OrderZone?
+  toZone     OrderZone?
+
+  comment  String? @db.Text
+  // FIELD_UPDATED: { field, oldValue, newValue }
+  // ALERT_RAISED / ALERT_RESOLVED: { alertId }
+  metadata Json?
+
+  // nullable to support V2-style form; connect to User when auth is ready
+  performedById String?
+  performedBy   User?    @relation(fields: [performedById], references: [id])
+  performedAt   DateTime @default(now())
+
+  @@index([orderId])
+  @@index([performedById])
+  @@index([performedAt])
+  @@index([action])
+  @@map("workflow_history")
+}
+
+// ─────────────────────────────────────────
+// ALERT
+// CRITICAL severity -> middleware sets isSuspended = true
+// and appends WorkflowHistory with action = SUSPENDED
+// ─────────────────────────────────────────
+
+// ─────────────────────────────────────────
+// CRAFTSMAN — production worker registry
+// ─────────────────────────────────────────
+
+model Craftsman {
+  id        String   @id @default(cuid())
+  /// 🔴 KHOÁ NỐI THẬT của bảng này. Dữ liệu sản xuất KHÔNG trỏ tới thợ bằng `id` — nó lưu tên
+  /// dạng chữ rồi tra ngược (xem api/reports/stages và types/kpi-report.ts: "" khi thợ chưa có
+  /// trong danh mục). Đổi tên một thợ là cắt đứt lịch sử của họ.
+  name      String   @unique
+  /// Mã thợ: "265", "T07"… TÙY CHỌN — "" nghĩa là chưa có, và đó là giá trị hợp lệ.
+  ///
+  /// ⚠️ KHÔNG THÊM @unique. Đây là NHÃN cho người đọc, không phải định danh — `name` ở trên mới
+  /// là khoá nối. Khác `Designer3D.code`: bên đó mã LÀ định danh (bắt buộc, min(1), đã dùng để
+  /// khớp nhân viên khi cấp tài khoản). Hai trường cùng tên, hai vai trò, hai luật.
+  code      String   @default("")
+  level     String   @default("") // "Bậc 5" / "Bậc 4" / ... / "" = no level
+  khau      String   @default("") // "Nguội" | "Hột" | "TC Dây" | "ĐBXM" | "Đúc" | "QC" | "" = unassigned
+  levelRank Int      @default(0) // 9=KTSX, 5/4/3/2=level rank — used for dropdown sort
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("craftsmen")
+}
+
+// ─────────────────────────────────────────
+// DESIGNER 3D — 3D design staff registry
+// ─────────────────────────────────────────
+
+model Designer3D {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @default("") // mã nhân viên: "265", "602", ...
+  userId    String?  @unique
+  user      User?    @relation("Designer3DUser", fields: [userId], references: [id], onDelete: SetNull)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments      Design3DAssignment[]
+  overtimeRequests Design3DOvertimeRequest[]
+
+  @@map("designers_3d")
+}
+
+model Kpi3DGroup {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  standardMinutes Int
+  description     String?  @db.Text
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assignments Design3DAssignment[]
+
+  @@index([isActive])
+  @@map("kpi_3d_groups")
+}
+
+model WorkingCalendar {
+  id        String   @id @default(cuid())
+  name      String
+  timezone  String   @default("Asia/Ho_Chi_Minh")
+  isDefault Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions    WorkingCalendarSession[]
+  holidays    WorkingCalendarHoliday[]
+  assignments Design3DAssignment[]
+
+  @@index([isDefault])
+  @@index([isActive])
+  @@map("working_calendars")
+}
+
+model WorkingCalendarSession {
+  id         String          @id @default(cuid())
+  calendarId String
+  calendar   WorkingCalendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+
+  dayOfWeek   Int
+  startMinute Int
+  endMinute   Int
+  label       String?
+  sortOrder   Int     @default(0)
+
+  @@index([calendarId, dayOfWeek])
+  @@map("working_calendar_sessions")
+}
+
+model WorkingCalendarHoliday {
+  id         String          @id @default(cuid())
+  calendarId String
+  calendar   WorkingCalendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+
+  date DateTime @db.Date
+  name String
+
+  @@unique([calendarId, date])
+  @@index([date])
+  @@map("working_calendar_holidays")
+}
+
+model Design3DAssignment {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  designer3DId String
+  designer3D   Designer3D @relation(fields: [designer3DId], references: [id], onDelete: Restrict)
+
+  assignedById String?
+  assignedBy   User?   @relation("Design3DAssignmentAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  kpiGroupId String
+  kpiGroup   Kpi3DGroup @relation(fields: [kpiGroupId], references: [id], onDelete: Restrict)
+
+  workingCalendarId String?
+  workingCalendar   WorkingCalendar? @relation(fields: [workingCalendarId], references: [id], onDelete: SetNull)
+
+  assignedAt              DateTime
+  standardMinutesSnapshot Int
+  deadlineAt              DateTime
+  status                  Design3DAssignmentStatus @default(ASSIGNED)
+  completedAt             DateTime?
+  kpiStatus               Kpi3DResultStatus?
+  kpiDeltaMinutes         Int?
+
+  // Số giờ THỰC TẾ do Order nhập, quy ra phút. KHÁC standardMinutesSnapshot (số giờ KPI chuẩn
+  // của nhóm) — đây là công sức thật đã bỏ ra, dùng cho cột "Tổng giờ TT" trong báo cáo.
+  //
+  // VÌ SAO PHẢI NẰM Ở ĐÂY, KHÔNG PHẢI JSON: trước nay con số này sống trong
+  // extraData.perItem[itemId].design.gioThucTe — MỘT ô cho MỘT MO. Khi một MO có NHIỀU NV 3D
+  // cùng làm, một ô không thể mang hai con số, và báo cáo buộc phải gán cùng một giá trị cho
+  // mọi người (xem mergeKpi3DSources) → tổng giờ bị nhân bản theo số người. Gắn vào lượt giao
+  // việc thì mỗi người có con số của riêng mình.
+  //
+  // Lưu bằng PHÚT (Int) chứ không phải giờ (Float) để tránh sai số dấu phẩy động khi cộng dồn
+  // — cùng đơn vị với standardMinutesSnapshot và kpiDeltaMinutes.
+  actualMinutes Int?
+
+  reassignedFromId String?
+  reassignedFrom   Design3DAssignment?  @relation("Design3DReassignment", fields: [reassignedFromId], references: [id], onDelete: SetNull)
+  reassignedTo     Design3DAssignment[] @relation("Design3DReassignment")
+
+  // ─── Không duyệt → đổi sang NV 3D khác ──────────────────────────────────────
+  //
+  // Đóng dấu trên lượt CŨ tại thời điểm bị lấy đơn. Ba trường, ba việc khác nhau:
+  //
+  // reassignedAt — MỐC PHÂN BIỆT đường mới với đường cũ. Lượt bị đóng thành REASSIGNED qua
+  //   form sửa đơn hàng (đường có từ trước) KHÔNG có mốc này. Báo cáo KPI dựa vào đó để
+  //   không kéo ngược dữ liệu lịch sử vào bảng: số của các tháng đã chốt phải giữ nguyên.
+  //
+  // kpiCounted — quyết định của người duyệt, KHÔNG phải luật cố định. Cùng là "không duyệt"
+  //   nhưng nhân viên làm ẩu thì không tính công, còn khách đổi ý hay yêu cầu mơ hồ thì vẫn
+  //   tính. Hệ thống không đoán được, nên hộp thoại BẮT chọn và con số lưu ở đây.
+  //   Mặc định true chỉ để mọi lượt bình thường không bị ảnh hưởng — nó chỉ có nghĩa khi
+  //   đi kèm reassignedAt.
+  //
+  // reassignDecidedById — AI đã bấm "không tính KPI". Đây là quyết định đụng tới lương;
+  //   cuối tháng nhân viên thắc mắc mà không trả lời được ai quyết thì tính năng này thành
+  //   nguồn tranh cãi thay vì công cụ.
+  // Vì sao lượt NÀY tồn tại — chỉ có ở lượt thứ 2 trở đi. null = đây là lần 1.
+  //
+  // Số "lần thứ mấy" KHÔNG cần cột: đếm theo chuỗi reassignedFrom là ra, và một cột đếm sẽ lệch
+  // ngay lần đầu ai đó xoá một lượt giữa chuỗi.
+  continuationReason Design3DContinuationReason?
+
+  reassignedAt        DateTime?
+  kpiCounted          Boolean   @default(true)
+  reassignDecidedById String?
+  reassignDecidedBy   User?     @relation("Design3DAssignmentReassignDecidedBy", fields: [reassignDecidedById], references: [id], onDelete: SetNull)
+
+  // Đã gửi thông báo Google Chat cho nhân viên chưa. Thông báo thất bại ÂM THẦM còn tệ hơn
+  // không có: Order sẽ tưởng nhân viên đã biết. Mốc này để sidebar hiện "Đã gửi thông báo lúc…"
+  // hay "Chưa gửi được", ghép với acknowledgedAt thành cặp: gửi rồi mà mãi chưa nhận thì Order
+  // biết chính xác cần nhắc ai.
+  notifiedAt DateTime?
+
+  // NV 3D xác nhận đã nhận việc — trục ĐỘC LẬP với tiến độ, giống trục kiểm bên dưới.
+  // Cố ý KHÔNG thêm giá trị vào Design3DAssignmentStatus: trường `status` mang nghĩa "tiến độ
+  // công việc" và do dòng tiến độ điều khiển; nhồi "đã biết việc" vào đó sẽ làm nhoè ý nghĩa.
+  //
+  // Lý do nghiệp vụ: deadlineAt tính từ assignedAt — một giá trị Order GÕ TAY và có thể đặt ở
+  // tương lai. Nên "đã giao" hiện chỉ là ý định của Order. Mốc này biến nó thành sự kiện có
+  // hai bên, và cho phép đo độ trễ bàn giao mà KHÔNG đụng vào KPI.
+  acknowledgedAt   DateTime?
+  acknowledgedById String?
+  acknowledgedBy   User?     @relation("Design3DAssignmentAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+
+  // Kiểm kết quả nội bộ — set khi NV 3D gửi kết quả (SENT_RESULT), độc lập với luồng
+  // DESIGN_REVIEW của Order (đó là chờ khách duyệt, đây là chờ Order/Admin kiểm trước).
+  reviewStatus Design3DReviewStatus?
+  reviewedById String?
+  reviewedBy   User?                 @relation("Design3DAssignmentReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  reviewNote   String?               @db.Text
+  // Số lần bị yêu cầu làm lại — đo CHẤT LƯỢNG tách biệt khỏi KPI tiến độ (đóng dấu một lần,
+  // không đổi theo số lần làm lại) để không lẫn hai chỉ số khác nhau vào một con số.
+  reworkCount  Int                   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  progressLogs     Design3DProgressLog[]
+  overtimeRequests Design3DOvertimeRequest[]
+  pauses           Design3DPause[]
+
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([designer3DId])
+  @@index([status])
+  @@index([deadlineAt])
+  @@map("design_3d_assignments")
+}
+
+model Design3DProgressLog {
+  id String @id @default(cuid())
+
+  assignmentId String
+  assignment   Design3DAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  updatedById String?
+  updatedBy   User?   @relation("Design3DProgressUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  status          Design3DProgressStatus
+  progressPercent Int?
+  renderInfoUrl   String?                @db.Text
+  note            String?                @db.Text
+
+  /// NV 3D BÁO LẠI thực tế đã làm là gì — một giá trị trong DESIGN_REQUEST_OPTIONS
+  /// (app/lib/business/kpi-3d/design-request.ts).
+  ///
+  /// 🔴 KHÔNG PHẢI bản sao của "Yêu cầu thiết kế". Trường kia là CÂU HỎI của Đặt đơn và nằm
+  /// trong ProductionDetail.extraData; trường này là CÂU TRẢ LỜI của NV 3D. Giữ cả hai mới so
+  /// được lệch; ghi câu trả lời lên câu hỏi là xoá mất chính thứ cần kiểm soát.
+  ///
+  /// ⚠️ null KHÔNG có nghĩa "trùng yêu cầu". Ô này TÙY CHỌN, nên null = "NV không báo gì" —
+  /// gộp cả người xác nhận đúng và người bỏ qua ô. Đếm số đơn lệch trên cột này chỉ trả lời
+  /// "bao nhiêu đơn ĐƯỢC BÁO là lệch", không phải "bao nhiêu đơn lệch".
+  ///
+  /// Lưu ở BẢNG LOG, không ở assignment: mỗi lần nộp một dòng, nên gửi lại lần hai với báo cáo
+  /// khác thì cả hai lần còn nguyên, kèm ai báo và lúc nào.
+  reportedDesignRequest String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([assignmentId])
+  @@index([updatedById])
+  @@index([createdAt])
+  @@map("design_3d_progress_logs")
+}
+
+model Design3DOvertimeRequest {
+  id String @id @default(cuid())
+
+  assignmentId String
+  assignment   Design3DAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  designer3DId String
+  designer3D   Designer3D @relation(fields: [designer3DId], references: [id], onDelete: Restrict)
+
+  requestedById String?
+  requestedBy   User?   @relation("Design3DOvertimeRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  startAt DateTime
+  endAt   DateTime
+  minutes Int
+  reason  String?                @db.Text
+  status  Design3DOvertimeStatus @default(PENDING)
+
+  approvedById String?
+  approvedBy   User?     @relation("Design3DOvertimeApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assignmentId])
+  @@index([designer3DId])
+  @@index([status])
+  @@map("design_3d_overtime_requests")
+}
+
+// ─────────────────────────────────────────
+// TẠM DỪNG lượt giao việc 3D — DỪNG ĐỒNG HỒ KPI
+//
+// VÌ SAO CẦN: Admin/Order thường bắt NV 3D gác đơn đang làm để nhảy sang đơn gấp hơn. Trước bản
+// này hệ thống KHÔNG biết chuyện đó, và hậu quả nằm ở ba chỗ — đều sai theo hướng khác nhau:
+//
+//   1. GIỜ THỰC TẾ PHỒNG LÊN. actualMinutes đo MỘT khoảng liên tục từ lúc nhận việc tới lúc
+//      xong, nên ba tuần bị gác cũng được cộng vào công sức của nhân viên. Con số đó hoá ra đo
+//      THỜI GIAN TRÔI QUA chứ không đo công sức.
+//   2. TỰ ĐỘNG THÀNH TRỄ. deadlineAt cố định từ lúc giao, không dời — nhân viên lãnh án trễ hạn
+//      cho một quyết định của admin.
+//   3. Báo cáo tính "đơn chưa HT" vào tháng giao, nên tháng đó mang một lời buộc tội vĩnh viễn.
+//
+// VÌ SAO LÀ BẢNG RIÊNG, KHÔNG PHẢI CẶP CỘT pausedAt/resumedAt TRÊN ASSIGNMENT: một đơn có thể
+// bị gác NHIỀU LẦN. Hai cột chỉ giữ được lần cuối, và mọi lần trước biến mất khỏi phép trừ.
+//
+// VÌ SAO KHÔNG DÙNG LẠI WAITING_INFO: trạng thái đó do CHÍNH NV 3D đặt qua dòng tiến độ. Cho
+// người được chấm điểm tự dừng đồng hồ thì KPI không còn nghĩa gì — chỉ cần bấm dừng mỗi khi
+// rời bàn là mọi đơn đều đúng hạn. Tạm dừng ở đây CHỈ Admin/Order được bấm.
+// ─────────────────────────────────────────
+
+// ⚠️ MÔ HÌNH NÀY CÓ MỘT INDEX KHÔNG KHAI ĐƯỢC Ở ĐÂY.
+//
+//   CREATE UNIQUE INDEX design_3d_pauses_one_open_per_assignment
+//     ON design_3d_pauses (assignmentId) WHERE resumedAt IS NULL;
+//
+// (migration 20260813120000_one_open_pause_per_assignment)
+//
+// Nó là partial unique index — Prisma schema không có cú pháp cho `WHERE`. Khai @@unique thường
+// thì cấm luôn cả các khoảng dừng ĐÃ ĐÓNG, tức cấm một MO bị gác lần thứ hai; đó là nghiệp vụ có
+// thật. Nó chặn hai khoảng CÙNG MỞ trên một lượt — trạng thái mà mở lại không chữa được (đóng
+// một khoảng, khoảng kia mở vĩnh viễn) nên chip "Tạm dừng" không bao giờ mất.
+//
+// 🚨 `prisma migrate dev` KHÔNG THẤY index này trong schema và sẽ sinh ra một lệnh DROP nó ở
+// migration kế tiếp. Gặp DROP INDEX "design_3d_pauses_one_open_per_assignment" trong một migration
+// mới thì XOÁ DÒNG ĐÓ đi rồi hãy chạy.
+model Design3DPause {
+  id String @id @default(cuid())
+
+  assignmentId String
+  assignment   Design3DAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  pausedAt  DateTime
+  // null = ĐANG dừng. Đơn hoàn thành khi còn đang dừng thì đóng khoảng tại completedAt —
+  // để mở vô hạn sẽ khiến phép trừ ăn hết mọi phút về sau.
+  resumedAt DateTime?
+
+  // BẮT BUỘC. Tạm dừng làm thay đổi cả giờ thực tế lẫn deadline của người khác, nên phải trả
+  // lời được "vì sao" khi đối chiếu KPI cuối tháng. Cùng nguyên tắc với lý do hủy đơn.
+  reason String @db.Text
+
+  pausedById String?
+  pausedBy   User?   @relation("Design3DPausedBy", fields: [pausedById], references: [id], onDelete: SetNull)
+
+  resumedById String?
+  resumedBy   User?   @relation("Design3DResumedBy", fields: [resumedById], references: [id], onDelete: SetNull)
+  resumeNote  String? @db.Text
+
+  // ─── Giờ đã làm, CHỐT tại thời điểm dừng ────────────────────────────────────
+  //
+  // VÌ SAO CẦN: giờ công trước nay chỉ được ghi nhận MỘT LẦN, ở tháng đơn hoàn tất
+  // (report.ts: `if (completedYmd in month) tongGio += hoursActual`). Nhân viên làm 20 giờ
+  // trong tháng 8, đơn bị gác vô hạn, xong tháng 11 → tháng 8 của họ TRỐNG TRƠN.
+  //
+  // Con số này là mốc chốt sổ cho tháng đó. Nó CỘNG DỒN từ lúc nhận việc, không phải giờ của
+  // riêng đoạn vừa rồi — nhờ vậy phần ghi nhận cho mỗi tháng là HIỆU giữa hai lần chốt liên
+  // tiếp, và không cách nào cộng trùng (xem kpi-3d/hours-ledger.ts).
+  //
+  // NẰM Ở BẢN GHI DỪNG, không phải trên assignment: một đơn gác nhiều lần thì mỗi đoạn có con
+  // số riêng; một cột trên assignment chỉ giữ được lần cuối và xoá mất các mốc trước.
+  confirmedMinutes Int?
+  // Ai xác nhận con số đó. Nó đi thẳng vào KPI nên phải truy được người chốt — cùng lý do với
+  // reassignDecidedById ở Design3DAssignment.
+  confirmedById    String?
+  confirmedBy      User?   @relation("Design3DPauseConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([assignmentId])
+  // Truy vấn "đang dừng cái nào" chạy trên mọi lần mở bảng — lọc theo resumedAt IS NULL.
+  @@index([resumedAt])
+  @@map("design_3d_pauses")
+}
+
+// ─────────────────────────────────────────
+// KPI MONTHLY CONFIG — cấu hình tính ĐM/Tháng cho KPI Thợ SX (khâu Nguội)
+// Mỗi (year, month) 1 dòng: số ngày lễ + ĐM ghi đè cho thợ đặc biệt (mới vào / bán thời gian).
+// ĐM chung = (số ngày trong tháng − số Chủ Nhật − holidayDays) × 2. Chủ Nhật webapp tự tính.
+// ─────────────────────────────────────────
+
+model KpiMonthlyConfig {
+  id          String   @id @default(cuid())
+  year        Int
+  month       Int
+  /// Số ngày lễ của tháng. Nay chỉ còn định nghĩa NGÀY CÔNG MẶC ĐỊNH (số ngày − Chủ Nhật − lễ)
+  /// cho thợ chưa được điền ngày công thực tế — xem `workDays`.
+  holidayDays Int      @default(0)
+  /// ⚠️ ĐÃ NGỪNG DÙNG — giữ lại để không mất dữ liệu cũ. Xem `workDays`.
+  ///
+  /// Trước đây: { [tênThợ]: ĐM_ghi_đè }. Nghĩa là hệ thống lưu KẾT QUẢ (ĐM) và cho người dùng
+  /// sửa thẳng nó. Nay lưu NGUYÊN LIỆU (ngày công) và ĐM tự suy ra — một đường duy nhất.
+  ///
+  /// KHÔNG diễn giải lại cột này thành ngày công: dữ liệu trong đây mang nghĩa ĐM, đọc nhầm là
+  /// một con số sai trông y như số đúng.
+  overrides   Json     @default("{}")
+  /// { [tênThợ]: số_ngày_công_thực_tế } — điền lúc kiểm kê, ORDER/ADMIN sửa lại được sau.
+  ///
+  /// Thợ KHÔNG có key ở đây thì dùng ngày công mặc định theo lịch (suy từ `holidayDays`). Nhờ
+  /// vậy ngày đầu triển khai không ô nào trống, và việc điền tay là chỉnh cho khớp thực tế chứ
+  /// không phải điều kiện để bảng chạy.
+  ///
+  /// Khoá theo TÊN thợ — cùng quy ước với `overrides` và với toàn bộ đường ống KPI, vốn nối vào
+  /// danh mục thợ bằng tên dạng chữ (xem api/reports/stages).
+  workDays    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([year, month])
+  @@map("kpi_monthly_config")
+}
+
+model Alert {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  type        AlertType
+  severity    AlertSeverity @default(MEDIUM)
+  title       String
+  description String?       @db.Text
+
+  isResolved   Boolean   @default(false)
+  resolvedAt   DateTime?
+  resolvedNote String?
+
+  // prevents double-suspend if alert is processed more than once
+  autoSuspended Boolean @default(false)
+
+  raisedById String?
+  raisedBy   User?   @relation(fields: [raisedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([isResolved])
+  @@index([severity])
+  @@map("alerts")
+}
+
+// ─── Phản hồi từ người dùng ──────────────────────────────────────────────────
+//
+// Kênh để nhân viên báo lỗi và đề xuất cải tiến NGAY TRONG hệ thống, thay vì nhắn qua nền
+// tảng khác. Xem app/lib/business/feedback/* cho toàn bộ luật.
+
+enum FeedbackKind {
+  BUG
+  IDEA
+}
+
+enum FeedbackStatus {
+  NEW
+  // Chỉ dùng cho BUG
+  TRIAGED
+  // Chỉ dùng cho IDEA
+  ACKNOWLEDGED
+  IN_PROGRESS
+  // Hai kết cục dùng chung, nhưng MANG NGHĨA KHÁC theo loại — xem status.ts:statusLabel
+  RESOLVED
+  DECLINED
+}
+
+model FeedbackReport {
+  id     String         @id @default(cuid())
+  kind   FeedbackKind
+  status FeedbackStatus @default(NEW)
+
+  summary String @db.Text
+  detail  String @default("") @db.Text
+
+  imageUrls String[]
+
+  // ─── Người gửi ─────────────────────────────────────────────────────────────
+  // reporterId NULLABLE và onDelete: SetNull. Hai lý do:
+  //   1. AuthUser.dbId là `undefined` với VIRTUAL_ADMIN (không có hàng users) — xem
+  //      auth-helpers.ts. Bắt buộc FK là chặn luôn admin ảo không gửi được phản hồi.
+  //   2. Xoá một nhân viên KHÔNG được xoá theo các báo cáo lỗi họ từng gửi — đó là dữ liệu
+  //      về HỆ THỐNG, không phải về con người.
+  reporterId String?
+  reporter   User?   @relation("FeedbackReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+
+  // Ảnh chụp danh tính lúc gửi. KHÔNG phải dữ liệu trùng lặp vô ích: khi reporterId bị
+  // SetNull thì đây là thứ duy nhất còn cho biết ai đã báo, và role lúc đó là gì (một người
+  // đổi role thì báo cáo cũ vẫn phải đọc được theo role cũ mới có nghĩa).
+  reporterName  String
+  reporterEmail String
+  reporterRole  String
+
+  // ─── Bối cảnh tự động ──────────────────────────────────────────────────────
+  // Đây là phần làm nên khác biệt với tin nhắn chat — xem context.ts.
+  pageUrl      String?
+  // orderId CỐ Ý KHÔNG phải khoá ngoại tới Order. Một phản hồi không được phép chặn việc xoá
+  // đơn, và cũng không được biến mất theo đơn: nó là bằng chứng về phần mềm. orderNumber lưu
+  // song song nên vẫn đọc được kể cả khi đơn đã đi.
+  orderId      String?
+  orderNumber  String?
+  moNumber     String?
+  orderVersion Int?
+  commitSha    String?
+  userAgent    String?
+  viewport     String?
+
+  // ─── Đóng vòng phản hồi ────────────────────────────────────────────────────
+  // Thiếu ba trường này thì người gửi không bao giờ biết chuyện gì xảy ra, và sau lần thứ hai
+  // họ quay về nhắn tin. Một hộp thư một chiều bị bỏ dùng trong hai tuần.
+  adminReply  String?   @db.Text
+  repliedAt   DateTime?
+  repliedById String?
+  repliedBy   User?     @relation("FeedbackResponder", fields: [repliedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([kind])
+  @@index([reporterId])
+  @@index([createdAt])
+  @@map("feedback_reports")
+}
+
+// ─── Changelog — "Có gì mới" ──────────────────────────────────────────────────
+//
+// Admin ghi lại những gì vừa cải tiến, người dùng thấy. Luật ở app/lib/business/changelog/*.
+//
+// VÌ SAO NẰM TRONG DB CHỨ KHÔNG PHẢI MỘT FILE TRONG REPO: phần lớn thay đổi đáng thông báo ở
+// dự án này KHÔNG CÓ COMMIT NÀO — thêm MO bằng SQL, gộp hai nhân viên 3D, cấu hình lại nhóm
+// KPI. File trong repo buộc phải deploy một lần chỉ để đăng một dòng chữ, và việc đó sẽ không
+// được làm.
+
+enum ChangelogArea {
+  ORDERS
+  DESIGN_3D
+  PSX
+  STATISTICS
+  GENERAL
+}
+
+model ChangelogEntry {
+  id String @id @default(cuid())
+
+  title String
+  body  String        @default("") @db.Text
+  area  ChangelogArea @default(GENERAL)
+
+  /// Quyết định hiện băng thông báo trên đầu trang hay chỉ đếm vào chấm đỏ.
+  isImportant Boolean @default(false)
+
+  // ─── Nháp → Đăng ───────────────────────────────────────────────────────────
+  isPublished Boolean   @default(false)
+  publishedAt DateTime?
+
+  /// ⚠️ TRƯỜNG QUYẾT ĐỊNH CỦA CẢ TÍNH NĂNG — xem business/changelog/publish.ts.
+  ///
+  /// null = CHƯA từng thông báo cho ai. Thông báo CHỈ bắn khi trường này còn null, nên sửa một
+  /// lỗi chính tả ở mục đã đăng KHÔNG BAO GIỜ bắn lần hai.
+  ///
+  /// KHÔNG suy ra từ `isPublished`: suy ra từ chuyển trạng thái ("vừa đổi false→true thì bắn")
+  /// đúng cho đường thuận và sai ngay khi có ai bỏ đăng rồi đăng lại, hoặc hai tab cùng bấm
+  /// Đăng, hoặc một lần chạy bị ngắt giữa lúc ghi DB và lúc gọi Chat. Trường này ghi một SỰ
+  /// THẬT ĐÃ XẢY RA, và sự thật đã xảy ra thì không đảo được.
+  notifiedAt DateTime?
+
+  // Ai viết. onDelete: SetNull vì xoá một admin không được xoá theo lịch sử cải tiến của hệ
+  // thống. authorName lưu song song để mục cũ vẫn đọc được sau khi FK đã null.
+  authorId   String?
+  author     User?   @relation("ChangelogAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  authorName String
+
+  /// Bản build đang chạy lúc đăng — tự lấy, cùng cách feedback đang làm. Đây là thứ đối chiếu
+  /// được một mục changelog với một báo cáo lỗi ở cùng bản.
+  commitSha String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isPublished, publishedAt])
+  @@index([area])
+  @@map("changelog_entries")
+}
+
+// ─── Hỏi trợ lý — log câu hỏi ─────────────────────────────────────────────────
+//
+// 🎯 BẢNG NÀY KHÔNG PHẢI ĐỂ LƯU TRỮ CHO CÓ. Nó làm ba việc, và việc thứ ba là việc có giá trị
+// lâu dài nhất của cả tính năng:
+//
+//   1. NỀN CỦA HẠN MỨC. Đếm dòng trong 24 giờ = hạn mức theo người và trần toàn hệ thống. Không
+//      dùng bộ đếm trong RAM: mỗi phiên serverless có bộ nhớ riêng nên bộ đếm đó không giới hạn
+//      được gì thật. Xem business/ai/budget.ts.
+//   2. Đo chi phí thật (token vào/ra, token đọc từ cache).
+//   3. ĐO CHẤT LƯỢNG BỘ NỘI DUNG. `wasUnanswered` + 👎 là danh sách xếp hạng những chỗ nội dung
+//      còn thiếu hoặc viết chưa rõ — do chính người dùng chỉ ra bằng câu hỏi thật của họ. Đây
+//      là thứ trước đây không có cách nào biết ngoài phỏng đoán.
+model AiQuestionLog {
+  id String @id @default(cuid())
+
+  // Người hỏi. Nullable + SetNull, cùng lý do với FeedbackReport.reporterId: VIRTUAL_ADMIN
+  // không có hàng users, và xoá một nhân viên KHÔNG được xoá theo dữ liệu về việc hệ thống
+  // giải thích được hay không giải thích được điều gì.
+  userId String?
+  user   User?   @relation("AiQuestionAsker", fields: [userId], references: [id], onDelete: SetNull)
+
+  /// Vai trò LÚC HỎI — quyết định bộ nội dung nào được cấp, nên nó là phần của câu hỏi. Một
+  /// người đổi vai trò thì log cũ vẫn phải đọc được theo vai trò cũ mới có nghĩa.
+  userRole String
+
+  question String @db.Text
+  answer   String @db.Text
+
+  /// Trang đang mở lúc hỏi. Cho biết câu hỏi này SINH RA Ở ĐÂU — hai người hỏi cùng một câu ở
+  /// hai màn khác nhau là hai vấn đề thiết kế khác nhau.
+  pageUrl String?
+
+  /// id các mục nội dung trợ lý đã dẫn. Đã được đối chiếu với danh sách cho phép.
+  sourceIds String[]
+
+  /// Trợ lý tự nhận không tìm thấy câu trả lời — hoặc chỉ dẫn được id không tồn tại.
+  /// ⚠️ Đây là cột đáng đọc nhất của bảng này.
+  wasUnanswered Boolean @default(false)
+
+  /// id trợ lý bịa ra và đã bị loại. Rỗng là bình thường; tăng lên là dấu hiệu chỉ thị có vấn
+  /// đề. Không ghi lại thì việc loại id là một hành động vô hình.
+  droppedIds String[]
+
+  tokensIn        Int @default(0)
+  tokensOut       Int @default(0)
+  tokensCacheRead Int @default(0)
+
+  // ─── Người dùng chấm câu trả lời ───────────────────────────────────────────
+  /// null = chưa chấm. Phân biệt "chưa ai chấm" với "đã chấm là không giúp được" — gộp hai cái
+  /// đó là mọi câu chưa chấm bị đếm thành câu tốt.
+  wasHelpful Boolean?
+
+  /// Báo cáo được tạo từ nút 👎. Dùng lại nguyên đường ống Góp ý thay vì dựng ống thứ hai.
+  feedbackReportId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@index([wasUnanswered])
+  @@map("ai_question_logs")
+}
+
+// ─── Nhắc việc từ mẻ đồng bộ Google Sheet ────────────────────────────────────
+//
+// 🔴 VÌ SAO ĐÂY LÀ MỘT BẢNG RIÊNG, KHÔNG PHẢI `Alert`:
+//
+// Route tạo cảnh báo LUÔN tạm ngưng đơn — nó không hề kiểm `severity`, xem
+// api/orders/[id]/alerts. Nhưng "Đặt đơn quên chuyển MO sang Hoàn tất" và "Ngày HT lệch một
+// ngày so với sheet" KHÔNG phải lý do để dừng một đơn thật ngoài xưởng. Đó là LỜI NHẮC VIỆC,
+// không phải cảnh báo về đơn hàng. Gộp hai thứ đó lại là dừng sản xuất vì một ô chưa bấm.
+//
+// 🎯 MỘT DÒNG MỖI THÁNG, GHI ĐÈ MỖI LẦN ĐỒNG BỘ — TỰ ĐÓNG THEO CẤU TRÚC:
+//
+// Không có `isResolved`, không có chống trùng, không có bản ghi mốc. Đặt đơn chuyển MO sang
+// Hoàn tất hôm nay → mẻ đồng bộ 17h không còn MO đó trong payload → lời nhắc BIẾN MẤT. Trạng
+// thái mong muốn CHÍNH LÀ dữ liệu, nên không có vòng đời nào để lệch.
+//
+// ⚠️ MỖI THÁNG MỘT DÒNG, KHÔNG PHẢI MỘT DÒNG DUY NHẤT. Mẻ hằng ngày chỉ phủ tháng hiện tại +
+// tháng trước; ghi đè một dòng chung sẽ xoá sạch kết quả bù các tháng cũ vào sáng hôm sau.
+//
+// ⚠️ CHỈ ĐỌC, KHÔNG CÓ "ĐÁNH DẤU ĐÃ XỬ LÝ". Cách duy nhất để một mục biến mất là LÀM THẬT.
+// Một nút "bỏ qua" sẽ biến bộ dò này thành nơi chôn việc.
+model SyncNotice {
+  id String @id @default(cuid())
+
+  /// Tháng của tab sheet đã quét, dạng "YYYY-MM". Khoá tự nhiên của bảng — mỗi lần đồng bộ
+  /// tháng nào thì ghi đè đúng dòng của tháng đó.
+  month String @unique
+
+  /// Kết quả đối soát của lần quét GẦN NHẤT cho tháng này:
+  ///   { chuaHoanTat: [{ mo, orderId }], lechNgay: [{ mo, orderId, webapp, sheet }] }
+  ///
+  /// JSON chứ không phải bảng con: đây là ẢNH CHỤP bị thay nguyên khối mỗi lần, không phải tập
+  /// bản ghi có vòng đời riêng. Tách ra bảng con là thêm phép xoá/chèn cho một thứ luôn được
+  /// ghi đè trọn vẹn.
+  payload Json
+
+  /// Thời điểm mẻ đồng bộ tạo ra ảnh chụp này. Giao diện PHẢI hiện nó: tháng cũ không được
+  /// quét lại hằng ngày, và một danh sách cũ trông y hệt một danh sách mới nếu không có mốc.
+  syncedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sync_notices")
+}

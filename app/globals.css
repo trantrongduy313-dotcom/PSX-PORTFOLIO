@@ -1,0 +1,382 @@
+@import "tailwindcss";
+
+/* ── Design Tokens — Luxury Retail Editorial ──────────────────── */
+:root {
+  /* Surface — warm neutral beige */
+  --cream:       #F2EDE8;
+  --cream-dark:  #E8E4DE;
+  --cream-card:  #EEEBE5;
+
+  /* Text */
+  --ink:         #1A1714;
+  --ink-body:    #6B6560;
+  --ink-muted:   #9C9690;
+
+  /* Accent — wine magenta (refined vs hot pink) */
+  --pink:        #9B2D6F;
+  --pink-hover:  #7A2358;
+
+  /* Border */
+  --border:      #D9D4CE;
+  --border-md:   #C8C3BC;
+
+  /* Status */
+  --s-green:     #2D7A4F;
+  --s-red:       #9B2D2D;
+  --s-gold:      #8A6A1A;
+  --s-blue:      #1E40AF;
+
+  /* Radius */
+  --radius-sm:   2px;
+  --radius-md:   4px;
+
+  /* Mono — cho MA DINH DANH (MO#, SO#, so do bang).
+     VI SAO KHONG DE "monospace" TRAN: tu khoa do tra ve font mac dinh cua HE DIEU HANH —
+     tren Windows la Courier New, net rat manh va khong deu. Ma MO# la thu duoc doc nhieu nhat
+     trong ca bang, nen no xung dang mot font on dinh tren moi may. */
+  --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  /* Zebra cho bang — CUNG TONG voi ban in (#print-report .pr-table tbody tr:nth-child(even)).
+     Truoc day man hinh ke ngang MOI dong con giay dung soc: cung mot bang, hai ngon ngu hinh
+     anh. Dung chung mot bien de doi mot lan la doi ca hai. */
+  --row-zebra:   #FAF8F4;
+  /* Hover PHAI khac mau hang tieu de. Chung deu la --cream-dark nen re chuot len mot dong la no
+     mang dung mau header, va trong mot thoang doc nhu mot header thu hai. */
+  --row-hover:   #E4DFD7;
+
+  /* Shadow */
+  --shadow-card: 0 1px 3px rgba(26,23,20,0.06);
+  --shadow-hover: 0 4px 16px rgba(26,23,20,0.10);
+
+  /* Stage panel — sub-section tint (khối chi tiết bên trong 1 công đoạn) */
+  --stage-subbg: rgba(26,23,20,0.014);
+
+  --background:  var(--cream);
+  --foreground:  var(--ink-body);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+}
+
+/* ── Base reset ───────────────────────────────────────────────── */
+@layer base {
+  html, body {
+    background: var(--cream);
+    color: var(--ink-body);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-cormorant), 'Cormorant Garamond', Georgia, serif;
+    color: var(--ink);
+    font-weight: 400;
+  }
+
+  button, input, select, textarea {
+    font-family: var(--font-body), 'Be Vietnam Pro', sans-serif;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+  }
+}
+
+body {
+  background: var(--cream);
+  color: var(--ink-body);
+  font-family: var(--font-body), 'Be Vietnam Pro', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ── Spin animation (used by sync button RefreshCw icon) ─────── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Shimmer animation ────────────────────────────────────────── */
+@keyframes psx-shimmer {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.45; }
+  100% { opacity: 1; }
+}
+
+.psx-shimmer {
+  animation: psx-shimmer 1.4s ease-in-out infinite;
+}
+
+/* ── Utility classes ─────────────────────────────────────────── */
+@layer components {
+
+  /* Overline / label — uppercase tracking */
+  .psx-label {
+    font-family: var(--font-body), sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.10em;
+    color: var(--ink-muted);
+  }
+
+  /* Input — border-bottom only */
+  .psx-input {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-md);
+    padding: 8px 0;
+    font-size: 14px;
+    font-family: var(--font-body), sans-serif;
+    color: var(--ink-body);
+    width: 100%;
+    transition: border-color 0.15s ease-out;
+  }
+  .psx-input:focus {
+    border-bottom: 1.5px solid var(--ink);
+  }
+  .psx-input::placeholder {
+    color: var(--ink-muted);
+  }
+  .psx-input:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Badge — pill */
+  .psx-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-family: var(--font-body), sans-serif;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    border: 1px solid currentColor;
+    background: transparent;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Button primary — dark fill, square */
+  .psx-btn-primary {
+    background: var(--ink);
+    color: var(--cream);
+    border: none;
+    border-radius: 0;
+    padding: 0 20px;
+    height: 36px;
+    font-family: var(--font-body), sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.10em;
+    cursor: pointer;
+    transition: background 0.15s ease-out;
+    white-space: nowrap;
+  }
+  .psx-btn-primary:hover {
+    background: var(--pink);
+  }
+  .psx-btn-primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Landing page CTA button */
+  .psx-home-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--pink);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 14px 36px;
+    text-decoration: none;
+    transition: background 0.2s;
+  }
+  .psx-home-btn:hover {
+    background: var(--pink-hover);
+  }
+
+  /* Button secondary — outline */
+  .psx-btn-secondary {
+    background: transparent;
+    color: var(--ink-body);
+    border: 1px solid var(--border-md);
+    border-radius: 0;
+    padding: 0 16px;
+    height: 36px;
+    font-family: var(--font-body), sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+  }
+  .psx-btn-secondary:hover {
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+  .psx-btn-secondary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Google login button */
+  .psx-login-google-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: transparent;
+    border: 1px solid var(--border-md);
+    padding: 12px 20px;
+    font-family: var(--font-body), sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.10em;
+    color: var(--ink-body);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .psx-login-google-btn:hover {
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+
+  /* Table header */
+  /* ── Bang du lieu — MOT THANG CHU, BA BAC ─────────────────────────────────
+     Truoc ban nay bang co NAM co chu trong cung mot hang: 14px (o Anh 3D dung text-sm),
+     13px (.psx-td), 12px (TX/TX_MUTED/TX_MONO trong orders-table), 11px (chip SR), 10px
+     (dong duoi TwoLine + tieu de cot). Nam co, khong theo thang nao — va do moi la thu tao
+     cam giac "chua chuyen nghiep", khong phai so luong cot.
+
+     Ba bac dung chung:
+       - du kien CHINH : 12.5px / 500
+       - du kien PHU   : 10.5px / --ink-muted   (dong duoi TwoLine)
+       - tieu de cot   : 10px  / 600 / uppercase / 0.08em
+  */
+  .psx-th {
+    font-family: var(--font-body), sans-serif;
+    font-size: 10px;
+    /* 600, KHONG phai 500: chu HOA gian rong can weight cao hon de bu. Ban cu la 500 + gian
+       0.12em, va do la ly do hang tieu de doc ra "mo" — chu bi keo mong theo hai chieu. */
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-muted);
+    background: var(--cream-dark);
+    /* 16px -> 11px NGANG, giu nguyen DOC.
+       16 x 2 x 10 cot = 320px chi de lam dem — chinh la ly do bang phai keo ngang. Thu ve 11px
+       lay lai ~100px ma mat khong nhan ra khac biet, va KHONG BO COT NAO. Nhip doc giu nguyen
+       nen do thoang cua hang khong doi. */
+    padding: 10px 11px;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Cot SO: canh phai + tabular-nums.
+     Font body co chu so RONG KHAC NHAU, nen cot ngay "18/08/2026" nhay lan tan giua cac dong va
+     cac con so khong thang hang de so sanh. Day la chi tiet phan biet ro nhat mot bang nghiep vu
+     voi mot bang lam cho xong. */
+  .psx-th--num,
+  .psx-td--num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Cot NGAY: chi tabular-nums, GIU canh trai.
+     Ngay khong phai mot luong de so sanh do lon nen khong can canh phai — nhung no rat can chu so
+     deu be rong, vi cot ngay la cot lap lai nhieu chu so nhat trong bang. */
+  .psx-th--tab,
+  .psx-td--tab {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Table row */
+  .psx-tr {
+    /* DA BO border-bottom tung dong. Voi 10 cot, ke day du tao hieu ung LUOI nang. Chon MOT cach
+       phan dong — zebra — va dung dung tong cua ban in, de man hinh va giay noi cung mot ngon ngu.
+
+       Dong LE cung phai co background TUONG MINH (khong de transparent): o cot ghim dung
+       `background: inherit` de an theo mau hang, va inherit tu mot hang trong suot se de noi dung
+       cuon qua hien len duoi cot ghim. */
+    background: var(--cream-card);
+    transition: background 0.12s;
+    cursor: pointer;
+  }
+  .psx-tr:nth-child(even) {
+    background: var(--row-zebra);
+  }
+  /* Hover thang zebra o ca hai loai dong, va dung mot tong RIENG — khong dung lai --cream-dark
+     cua hang tieu de. Hover phai noi "dong nay dang duoc tro", khong noi "day la tieu de". */
+  .psx-tr:hover,
+  .psx-tr:nth-child(even):hover {
+    background: var(--row-hover);
+  }
+
+  /* Table cell */
+  .psx-td {
+    padding: 11px 11px;
+    /* 12.5px — bac "du kien chinh" cua thang chu.
+       KHAI BAO CU LA 13px VA NO LA MOT LOI NOI DOI: gan nhu moi o tu ghi de bang 12px qua TX/
+       TX_MUTED/TX_MONO trong orders-table, nen 13px chi con tac dung o vai o le. Nguoi sua sau
+       tin dong nay, doi no, va khong thay gi thay doi. Nay ca hai phia dung 12.5px. */
+    font-size: 12.5px;
+    color: var(--ink-body);
+    vertical-align: middle;
+  }
+
+  /* Card */
+  .psx-card {
+    background: var(--cream-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 24px 28px;
+  }
+}
+
+/* ── In / Xuất PDF báo cáo đơn hàng ─────────────────────────────────
+   #print-report ẩn hoàn toàn trên màn hình; chỉ hiện khi in (window.print).
+   Ẩn phần còn lại của app bằng visibility để chỉ in đúng báo cáo. */
+#print-report { display: none; }
+#print-report .pr-head { text-align: center; margin-bottom: 12px; }
+#print-report .pr-head h1 { font-size: 18px; font-weight: 700; margin: 0 0 4px; }
+#print-report .pr-sub { font-size: 13px; font-weight: 600; }
+#print-report .pr-meta { font-size: 11px; color: #444; margin-top: 4px; }
+#print-report .pr-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+#print-report .pr-table th,
+#print-report .pr-table td { border: 1px solid #d9d2c7; padding: 4px 6px; vertical-align: top; }
+#print-report .pr-table th { background: #efece5; font-weight: 700; text-align: left; }
+/* Kẻ sọc xen dòng (zebra) — cùng tông với bản in PDF đơn hàng (report-pdf.ts: ZEBRA/HEAD_BG/BORDER),
+   để hai bản in trong hệ thống dùng chung một ngôn ngữ hình ảnh dù đi hai cơ chế render khác nhau. */
+#print-report .pr-table tbody tr:nth-child(even) td { background: #faf8f4; }
+
+/* Hộp "Tổng hợp" theo thợ, chèn ngay dưới nhóm công việc của thợ đó (xem print-stage-review.tsx).
+   Đặt trong 1 ô colSpan hết bảng — tô nền riêng, ghi đè zebra của dòng chứa nó. */
+#print-report .pr-total-row td { background: #efece5 !important; padding: 8px 10px; }
+#print-report .pr-total-title { font-size: 11px; font-weight: 700; margin-bottom: 4px; }
+#print-report .pr-total-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 3px 16px; }
+#print-report .pr-total-stat { font-size: 10px; }
+#print-report .pr-total-label { color: #666; margin-right: 4px; }
+#print-report .pr-total-value { font-weight: 700; }
+
+@media print {
+  /* Bỏ !important ở body * — để ID specificity của #print-report thắng (báo cáo hiện, phần còn lại ẩn) */
+  body * { visibility: hidden; }
+  #print-report { display: block !important; visibility: visible; position: absolute; left: 0; top: 0; width: 100%; }
+  #print-report * { visibility: visible; }
+  #print-report .pr-table thead { display: table-header-group; }  /* lặp tiêu đề mỗi trang */
+  #print-report .pr-table tr { page-break-inside: avoid; }
+  @page { size: A4; margin: 12mm; }
+}

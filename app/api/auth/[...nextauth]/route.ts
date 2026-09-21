@@ -1,0 +1,6 @@
+// Auth.js v5: catch-all route xử lý mọi request OAuth
+// GET  /api/auth/signin, /api/auth/signout, /api/auth/session, ...
+// POST /api/auth/signin/google, /api/auth/callback/google, ...
+import { handlers } from "@/auth";
+
+export const { GET, POST } = handlers;

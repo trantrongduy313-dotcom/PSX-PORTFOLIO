@@ -1,0 +1,30 @@
+-- Mã thợ — nhãn tuỳ chọn cho hồ sơ thợ sản xuất ("265", "T07"…).
+--
+-- CỘNG THÊM, KHÔNG PHÁ: có DEFAULT '' và NOT NULL, nên mọi dòng hiện có nhận '' ngay lúc
+-- ALTER. Không cần backfill, và code cũ (không biết cột này) vẫn chạy bình thường.
+--
+-- ⚠️ CỐ Ý KHÔNG CÓ UNIQUE INDEX. Mã thợ là NHÃN cho người đọc, không phải định danh: dữ liệu
+-- sản xuất nối vào danh mục bằng TÊN dạng chữ (xem api/reports/stages, types/kpi-report.ts),
+-- và craftsmen.name đã UNIQUE. Thêm UNIQUE ở đây còn đụng ngay giữa các dòng bỏ trống.
+--
+-- Muốn mã là duy nhất về sau thì đổi hình dạng trước, theo đúng thứ tự này:
+--   UPDATE craftsmen SET code = NULL WHERE code = '';
+--   ALTER TABLE "craftsmen" ALTER COLUMN "code" DROP NOT NULL, ALTER COLUMN "code" DROP DEFAULT;
+--   CREATE UNIQUE INDEX "craftsmen_code_key" ON "craftsmen"("code");
+-- (Postgres cho phép nhiều NULL trong unique index — đó là lý do phải bỏ '' trước.)
+
+-- ⚠️ `IF NOT EXISTS` CÓ CHỦ Ý — KHÔNG PHẢI THÓI QUEN PHÒNG THỦ.
+--
+-- Câu lệnh này được chạy TAY qua Supabase SQL Editor trước, để tránh phải dán mật khẩu
+-- production vào shell (mật khẩu đó đang chờ đổi vì đã lộ). Nhưng chạy tay thì Prisma KHÔNG
+-- ghi được vào `_prisma_migrations` — và lần `migrate deploy` sau, có thể vài tuần nữa, nó sẽ
+-- thấy migration này chưa ghi sổ, chạy lại, gặp `column already exists`, rồi CHẶN LUÔN mọi
+-- migration đứng sau. Một lỗi hôm nay nổ vào một ngày không liên quan.
+--
+-- Cách vá thường thấy là tự INSERT một dòng vào `_prisma_migrations`, nhưng dòng đó cần
+-- checksum SHA-256 của đúng file này — mà repo đang bị git đổi LF↔CRLF khi checkout. Lệch một
+-- byte là Prisma báo "migration đã bị sửa": thay một cái bẫy bằng một cái bẫy khó hiểu hơn.
+--
+-- `IF NOT EXISTS` khiến lần deploy sau thành no-op và Prisma TỰ ghi sổ đúng chuẩn. Sổ tự khớp
+-- lại, không có bước nào phải nhớ.
+ALTER TABLE "craftsmen" ADD COLUMN IF NOT EXISTS "code" TEXT NOT NULL DEFAULT '';

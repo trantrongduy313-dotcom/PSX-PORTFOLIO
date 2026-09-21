@@ -1,0 +1,82 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ─── Bí mật ───────────────────────────────────────────────────────────────────
+#
+# ⚠️ LIỆT KÊ TỪNG FILE, KHÔNG DÙNG `.env*`.
+#
+# Bản trước có `.env*` ở dòng cuối, và nó KHỚP CẢ `.env.example` — tức là che đúng file mà
+# comment ngay trên nó nói "safe to commit". `.env.example` hiện vẫn còn vì đã được track từ
+# trước, nhưng ai clone rồi sửa nó sẽ thấy thay đổi KHÔNG xuất hiện trong `git status`. Đó là
+# loại lỗi im lặng: không ai báo, và phát hiện được khi đã mất công.
+.env
+.env.local
+.env.*.local
+.env.vercel.check
+
+# Google credentials / tokens — KHÔNG BAO GIỜ commit
+.google-token*.json
+google-oauth-client.json
+google-sa-key.json
+google-*.json
+
+# vercel
+.vercel
+
+# ─── Dữ liệu kinh doanh — KHÔNG commit ────────────────────────────────────────
+#
+# 🎯 VÌ SAO CÓ MỤC NÀY: 08/2026 ở thư mục gốc có 8 file CSV / 1,1 MB / 7.054 dòng xuất từ Google
+# Sheets — số MO, link Drive ảnh sản phẩm, trọng lượng vàng, mã SKU, cột Khách, và KPI của từng
+# thợ. Chúng đã được commit, nên chúng vẫn nằm trong lịch sử git: xoá khỏi thư mục KHÔNG xoá
+# khỏi repo.
+#
+# Nên mục này không dọn quá khứ — nó chặn TƯƠNG LAI. Vấn đề thật không phải "có mấy file CSV lỡ
+# nằm ở đây" mà là "không có gì ngăn file thứ chín xuất hiện tuần sau".
+#
+# Dữ liệu kinh doanh sống ở DATABASE. Cần một tệp để soi thì để ngoài repo.
+*.csv
+*.xlsx
+*.xls
+*.docx
+
+# Backup / output tạm của script bảo trì dữ liệu (chạy 1 lần, không cần lưu repo).
+# `fix-*-backup.json` là bản sao lưu một đơn TRƯỚC khi một script fix ghi vào nó — hữu ích
+# đúng lúc chạy script đó, vô nghĩa một tuần sau, và nó chứa dữ liệu đơn thật.
+normalize-date-tz-*.json
+*-backup.json
+backup-*.json
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+/app/generated/prisma
